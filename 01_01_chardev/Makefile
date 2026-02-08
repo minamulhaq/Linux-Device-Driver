@@ -1,13 +1,5 @@
-# modules -> to build modules  \
-modules_install -> to install modules  \
-clean -> to remove all generated files \
 
-# obj-<X> is kbuild variable \
-	# X = n, Do not compile the module \
-	# X = y, Compile the module and link with kernel image \
-	# X = m, Compile dynamically loadable module
-
-obj-m += hello.o
+obj-m += chardev.o
 
 ARCH=arm
 CROSS_COMPILE=arm-linux-gnueabihf-

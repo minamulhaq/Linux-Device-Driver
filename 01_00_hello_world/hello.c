@@ -9,13 +9,12 @@
  */
 
 // Should return 0 if modules is loaded successfully
-static int myinit(void) {
-  printk("Hello World!!!\n");
+static __init int myinit(void) {
+  pr_info("Hello World!!!\n");
   return 0;
 }
 
-static void myexit(void) { printk("Module removed!!!\n"); }
-
+static void __exit myexit(void) { pr_info("Module removed!!!\n"); }
 
 // Register Callbacks
 module_init(myinit);
