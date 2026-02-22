@@ -1,5 +1,8 @@
 
 #include "asm-generic/int-ll64.h"
+#include "linux/stat.h"
+#include <linux/stat.h>
+#include <linux/sysfs.h>
 #include <linux/dev_printk.h>
 #include <linux/device/devres.h>
 #include <linux/err.h>
@@ -24,22 +27,12 @@
 #include <linux/device.h>
 #include <linux/kdev_t.h>
 #include <linux/mod_devicetable.h>
-#include "platform.h"
-#include "private_data.h"
-
-#undef pr_fmt
-#define pr_fmt(fmt) "%s :" fmt, __func__
+#include "pcd_platform_driver_dt_sysfs.h"
+#include "pcd_syscalls.h"
 
 /* One global variable for driver private data strcuture */
 pcdrv_private_data pcdrv_data;
 
-loff_t pcd_lseek(struct file *filep, loff_t off, int whence);
-ssize_t pcd_read(struct file *filep, char __user *buff, size_t count,
-		 loff_t *f_pos);
-ssize_t pcd_write(struct file *filep, const char __user *buff, size_t count,
-		  loff_t *f_pos);
-int pcd_open(struct inode *inode, struct file *filep);
-int pcd_release(struct inode *inode, struct file *filep);
 /* file operations for driver */
 struct file_operations pcd_fops = { .read = pcd_read,
 				    .write = pcd_write,
@@ -48,6 +41,79 @@ struct file_operations pcd_fops = { .read = pcd_read,
 				    .release = pcd_release,
 				    .owner = THIS_MODULE };
 
+ssize_t show_max_size(struct device *dev, struct device_attribute *attr,
+		      char *buf)
+{
+	pcdev_private_data *dev_data = dev_get_drvdata(dev->parent);
+	return sprintf(buf, "%d\n", dev_data->pdata.size);
+}
+ssize_t store_max_size(struct device *dev, struct device_attribute *attr,
+		       const char *buf, size_t count)
+{
+	long result;
+	int ret;
+	char *new_buffer;
+
+	ret = kstrtol(buf, 10, &result);
+	if (ret)
+		return ret;
+
+	pcdev_private_data *dev_data = dev_get_drvdata(dev->parent);
+
+	/* Allocate new buffer with devm_ functions */
+	new_buffer = devm_kzalloc(dev->parent, result, GFP_KERNEL);
+	if (!new_buffer)
+		return -ENOMEM;
+
+	/* Copy old data if new size is smaller */
+	if (result < dev_data->pdata.size) {
+		memcpy(new_buffer, dev_data->buffer, result);
+	} else {
+		memcpy(new_buffer, dev_data->buffer, dev_data->pdata.size);
+	}
+
+	/* Free old buffer and assign new one */
+	devm_kfree(dev->parent, dev_data->buffer);
+	dev_data->buffer = new_buffer;
+	dev_data->pdata.size = result;
+
+	return count;
+}
+
+ssize_t show_serial_num(struct device *dev, struct device_attribute *attr,
+			char *buf)
+{
+	pcdev_private_data *dev_data = dev_get_drvdata(dev->parent);
+	return sprintf(buf, "%s\n", dev_data->pdata.serial_number);
+}
+/* Create two variables for struct device_attribute  using following Macros */
+DEVICE_ATTR(max_size, S_IRUGO | S_IWUSR, show_max_size, store_max_size);
+DEVICE_ATTR(serial_number, S_IRUGO, show_serial_num, NULL);
+
+struct attribute *pcd_attrs[] = {
+    /* We need attr field of device_attribute */
+    &dev_attr_max_size.attr ,
+    &dev_attr_serial_number.attr ,
+    NULL
+};
+
+struct attribute_group pcd_attr_group = {
+    .attrs = pcd_attrs
+};
+
+int pcd_sysfs_create_file(struct device *pcd_dev)
+{
+    /* This was old method 
+	ret = sysfs_create_file(&pcd_dev->kobj, &dev_attr_max_size.attr);
+	if (ret) {
+		return ret;
+	}
+	ret = sysfs_create_file(&pcd_dev->kobj, &dev_attr_serial_number.attr); 
+	return ret;
+    */
+    return sysfs_create_group(&pcd_dev->kobj, &pcd_attr_group);
+}
+
 /* we need to initialize platform driver
  * we need to initialize the name field of driver field of platform_driver
  * The matching mechanicsm matches the name field for driver with name field of device
@@ -55,10 +121,10 @@ struct file_operations pcd_fops = { .read = pcd_read,
  */
 
 /* Called when matched platform device is found */
-int pcd_platform_driver_probe(struct platform_device *device);
+// int pcd_platform_driver_probe(struct platform_device *device);
 
 /* Called when matched platform device is removed */
-void pcd_platform_driver_remove(struct platform_device *device);
+// void pcd_platform_driver_remove(struct platform_device *device);
 
 /* create config struct to used by driver_data field when matching based on ids */
 typedef struct {
@@ -307,6 +373,14 @@ int pcd_platform_driver_probe(struct platform_device *device)
 	}
 
 	pcdrv_data.total_devices++;
+
+	ret = pcd_sysfs_create_file(pcdrv_data.device_pcd);
+	if (ret) {
+		device_destroy(pcdrv_data.class_pcd, dev_data->dev_num);
+		return ret;
+	}
+
+	/*7: We created device under class, now we create attributes under this device */
 	return 0;
 }
 void pcd_platform_driver_remove(struct platform_device *device)
@@ -324,32 +398,6 @@ void pcd_platform_driver_remove(struct platform_device *device)
 
 	pcdrv_data.total_devices--;
 	dev_info(&device->dev, "A device is removed\n");
-}
-
-ssize_t pcd_read(struct file *filep, char __user *buff, size_t count,
-		 loff_t *f_pos)
-{
-	return 0;
-}
-ssize_t pcd_write(struct file *filep, const char __user *buff, size_t count,
-		  loff_t *f_pos)
-{
-	return -ENOMEM;
-}
-
-loff_t pcd_lseek(struct file *filep, loff_t offset, int whence)
-{
-	return 0;
-}
-
-int pcd_open(struct inode *inode, struct file *filep)
-{
-	return 0;
-}
-int pcd_release(struct inode *inode, struct file *filep)
-{
-	pr_info("release was successfull\n");
-	return 0;
 }
 
 module_init(pcd_platform_driver_init);
